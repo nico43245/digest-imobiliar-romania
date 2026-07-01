@@ -1,12 +1,12 @@
-"""Rezumare articole imobiliare folosind Google Gemini 1.5 Flash (gratuit)."""
+"""Rezumare articole imobiliare folosind Groq API cu LLaMA 3 (gratuit)."""
 
 import logging
 import os
-import google.generativeai as genai
+from groq import Groq
 
 logger = logging.getLogger(__name__)
 
-MODEL = "gemini-1.5-flash"
+MODEL = "llama-3.1-8b-instant"
 
 
 def _build_prompt(articles: list[dict]) -> str:
@@ -44,30 +44,34 @@ def summarize(articles: list[dict]) -> list[str] | None:
     if not articles:
         return []
 
-    api_key = os.environ.get("GEMINI_API_KEY")
+    api_key = os.environ.get("GROQ_API_KEY")
     if not api_key:
-        logger.error("Variabila de mediu GEMINI_API_KEY lipsește.")
+        logger.error("Variabila de mediu GROQ_API_KEY lipsește.")
         return None
 
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel(MODEL)
+    client = Groq(api_key=api_key)
     prompt = _build_prompt(articles)
 
     for attempt in range(1, 3):
         try:
-            logger.info(f"Apel Gemini API pentru rezumare (încercarea {attempt})...")
-            response = model.generate_content(prompt)
-            raw_text = response.text.strip()
+            logger.info(f"Apel Groq API pentru rezumare (încercarea {attempt})...")
+            response = client.chat.completions.create(
+                model=MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=1024,
+                temperature=0.3,
+            )
+            raw_text = response.choices[0].message.content.strip()
             summaries = _parse_summaries(raw_text, len(articles))
 
             if summaries:
                 logger.info(f"Rezumare reușită: {len(summaries)} articole procesate")
                 return summaries
 
-            logger.warning("Răspuns Gemini neașteptat, reîncerc...")
+            logger.warning("Răspuns Groq neașteptat, reîncerc...")
 
         except Exception as e:
-            logger.error(f"Eroare la rezumare cu Gemini (încercarea {attempt}): {e}")
+            logger.error(f"Eroare la rezumare cu Groq (încercarea {attempt}): {e}")
 
         if attempt == 1:
             logger.info("Reîncerc rezumarea...")
@@ -77,7 +81,7 @@ def summarize(articles: list[dict]) -> list[str] | None:
 
 
 def _parse_summaries(text: str, expected_count: int) -> list[str]:
-    """Parsează răspunsul Gemini și extrage rezumatele numerotate."""
+    """Parsează răspunsul și extrage rezumatele numerotate."""
     lines = text.strip().split("\n")
     summaries = []
 
@@ -98,29 +102,3 @@ def _parse_summaries(text: str, expected_count: int) -> list[str]:
         logger.warning(f"Am obținut {len(summaries)} rezumate din {expected_count} așteptate")
 
     return summaries
-
-
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
-
-    test_articles = [
-        {
-            "title": "Prețurile apartamentelor în București au crescut cu 8% în T1 2026",
-            "source": "Ziarul Financiar",
-            "description": "Piața rezidențială din capitală continuă tendința ascendentă...",
-            "url": "https://www.zf.ro/test1",
-        },
-        {
-            "title": "Noi reglementări pentru autorizațiile de construcție din 2026",
-            "source": "Economica.net",
-            "description": "Ministerul Dezvoltării a anunțat modificări la procedura de autorizare...",
-            "url": "https://www.economica.net/test2",
-        },
-    ]
-
-    rezultate = summarize(test_articles)
-    if rezultate:
-        for i, rez in enumerate(rezultate, 1):
-            print(f"{i}. {rez}")
-    else:
-        print("Rezumarea a eșuat.")
