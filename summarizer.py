@@ -1,12 +1,12 @@
-"""Rezumare articole imobiliare folosind Claude API (modelul Haiku 4.5)."""
+"""Rezumare articole imobiliare folosind Google Gemini 1.5 Flash (gratuit)."""
 
 import logging
-import anthropic
+import os
+import google.generativeai as genai
 
 logger = logging.getLogger(__name__)
 
-MODEL = "claude-haiku-4-5-20251001"
-MAX_TOKENS = 2048
+MODEL = "gemini-1.5-flash"
 
 
 def _build_prompt(articles: list[dict]) -> str:
@@ -44,35 +44,30 @@ def summarize(articles: list[dict]) -> list[str] | None:
     if not articles:
         return []
 
-    client = anthropic.Anthropic()
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        logger.error("Variabila de mediu GEMINI_API_KEY lipsește.")
+        return None
+
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel(MODEL)
     prompt = _build_prompt(articles)
 
     for attempt in range(1, 3):
         try:
-            logger.info(f"Apel Claude API pentru rezumare (încercarea {attempt})...")
-            response = client.messages.create(
-                model=MODEL,
-                max_tokens=MAX_TOKENS,
-                messages=[{"role": "user", "content": prompt}],
-            )
-
-            raw_text = response.content[0].text.strip()
+            logger.info(f"Apel Gemini API pentru rezumare (încercarea {attempt})...")
+            response = model.generate_content(prompt)
+            raw_text = response.text.strip()
             summaries = _parse_summaries(raw_text, len(articles))
 
             if summaries:
                 logger.info(f"Rezumare reușită: {len(summaries)} articole procesate")
                 return summaries
 
-            logger.warning("Răspuns Claude neașteptat, reîncerc...")
+            logger.warning("Răspuns Gemini neașteptat, reîncerc...")
 
-        except anthropic.RateLimitError as e:
-            logger.error(f"Rate limit Claude API (încercarea {attempt}): {e}")
-        except anthropic.APIStatusError as e:
-            logger.error(f"Eroare API Claude (încercarea {attempt}): {e.status_code} - {e.message}")
-        except anthropic.APIConnectionError as e:
-            logger.error(f"Eroare conexiune Claude API (încercarea {attempt}): {e}")
         except Exception as e:
-            logger.error(f"Eroare neașteptată la rezumare (încercarea {attempt}): {e}")
+            logger.error(f"Eroare la rezumare cu Gemini (încercarea {attempt}): {e}")
 
         if attempt == 1:
             logger.info("Reîncerc rezumarea...")
@@ -82,7 +77,7 @@ def summarize(articles: list[dict]) -> list[str] | None:
 
 
 def _parse_summaries(text: str, expected_count: int) -> list[str]:
-    """Parsează răspunsul Claude și extrage rezumatele numerotate."""
+    """Parsează răspunsul Gemini și extrage rezumatele numerotate."""
     lines = text.strip().split("\n")
     summaries = []
 
@@ -90,17 +85,15 @@ def _parse_summaries(text: str, expected_count: int) -> list[str]:
         line = line.strip()
         if not line:
             continue
-        # Caută linii care încep cu număr urmat de punct sau paranteză
         for sep in (". ", ") ", "- "):
             if line[0].isdigit() and sep in line:
                 idx = line.index(sep)
-                if idx <= 3:  # numărul are max 3 cifre
+                if idx <= 3:
                     summary = line[idx + len(sep):].strip()
                     if summary:
                         summaries.append(summary)
                     break
 
-    # Validare: verificăm că am obținut suficiente rezumate
     if len(summaries) < expected_count:
         logger.warning(f"Am obținut {len(summaries)} rezumate din {expected_count} așteptate")
 
@@ -110,7 +103,6 @@ def _parse_summaries(text: str, expected_count: int) -> list[str]:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
-    # Test cu articole fictive
     test_articles = [
         {
             "title": "Prețurile apartamentelor în București au crescut cu 8% în T1 2026",
